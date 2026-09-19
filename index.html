@@ -292,12 +292,12 @@
   const todayKey = () => new Date().toISOString().slice(0,10);
 
   let data = JSON.parse(localStorage.getItem(KEY) || '{"sessions":[],"active":null}');
-  let timerId = null, selectedPct = null, calendarDate = new Date();
+  let timerId = null, selectedPct = null, calendarDate = new Date(), lastRunAt = null;
 
   function save(){ localStorage.setItem(KEY, JSON.stringify(data)); }
 
   function formatTime(sec){
-    sec = Math.max(0, Math.round(sec));
+    sec = Math.max(0, Math.floor(sec));
     const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
     return [h,m,s].map((v,i)=> i===0 ? String(v).padStart(2,"0") : String(v).padStart(2,"0")).join(":");
   }
@@ -410,33 +410,36 @@
 
   function start(){
     if(!data.active)return openMissionModal();
+    if(timerId)return;
     if(!data.active.startedAt)data.active.startedAt=Date.now();
-    save();
-    timerId=setInterval(tick,1000);render();
+    lastRunAt=Date.now(); data.active.running=true; save();
+    timerId=setInterval(tick,250); render();
   }
   function pause(){
     if(!timerId)return;
-    clearInterval(timerId);timerId=null;
-    if(data.active){
-      data.active.elapsed=data.active.totalSeconds-data.active.remaining;
-      save();
-    }
-    render();beep("pause");
+    tick(); clearInterval(timerId); timerId=null; lastRunAt=null;
+    if(data.active)data.active.running=false;
+    save(); render(); beep("pause");
   }
   function tick(){
-    if(!data.active){clearInterval(timerId);timerId=null;return}
-    data.active.remaining--;
+    if(!data.active || !timerId)return;
+    const now=Date.now();
+    const delta=(now-(lastRunAt||now))/1000;
+    lastRunAt=now;
+    data.active.remaining=Math.max(0,data.active.remaining-delta);
     data.active.elapsed=data.active.totalSeconds-data.active.remaining;
     if(data.active.remaining<=0){
-      data.active.remaining=0;clearInterval(timerId);timerId=null;save();render();beep("done");openResultModal();
-    }else{save();render()}
+      data.active.remaining=0; data.active.running=false;
+      clearInterval(timerId); timerId=null; lastRunAt=null;
+      save(); render(); beep("done"); openResultModal();
+    }else{save(); render()}
   }
-
   function finishEarly(){
     if(!data.active)return;
-    if(timerId){clearInterval(timerId);timerId=null}
+    if(timerId){tick(); clearInterval(timerId); timerId=null; lastRunAt=null;}
+    data.active.running=false;
     data.active.elapsed=data.active.totalSeconds-data.active.remaining;
-    save();openResultModal();
+    save(); openResultModal();
   }
 
   function openResultModal(){
@@ -545,7 +548,15 @@
   $("addTimeBtn").onclick=addMore;
   $("prevMonth").onclick=()=>{calendarDate.setMonth(calendarDate.getMonth()-1);renderAnalytics()};
   $("nextMonth").onclick=()=>{calendarDate.setMonth(calendarDate.getMonth()+1);renderAnalytics()};
-  $("clearBtn").onclick=()=>{if(confirm("Delete all saved study sessions?")){data.sessions=[];save();render();toast("History cleared.")}};
+  $("clearBtn").onclick=()=>{
+    if(!data.sessions.length){toast("History is already empty.");return;}
+    const confirmed=window.confirm("Delete all saved study sessions? This cannot be undone unless you exported a backup.");
+    if(!confirmed)return;
+    data.sessions=[];
+    save();
+    render();
+    toast("History cleared successfully.");
+  };
   $("exportBtn").onclick=exportData;
   $("importBtn").onclick=importData;
   $("importFile").addEventListener("change",e=>handleImport(e.target.files[0]));
